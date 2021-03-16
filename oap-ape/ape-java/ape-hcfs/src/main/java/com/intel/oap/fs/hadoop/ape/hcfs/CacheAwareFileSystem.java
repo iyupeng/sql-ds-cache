@@ -62,7 +62,15 @@ public class CacheAwareFileSystem extends FileSystem {
 
     @Override
     public void initialize(URI name, Configuration conf) throws IOException {
+        if (conf == null) {
+            conf = new Configuration();
+        }
+
+        super.initialize(name, conf);
         uri = name;
+        setConf(conf);
+        LOG.info("hadoop conf: {}", getConf().toString());
+
         hdfs = new DistributedFileSystem();
         hdfs.initialize(name, conf);
         LOG.info("cache aware scheduler is initialized.");
@@ -247,7 +255,7 @@ public class CacheAwareFileSystem extends FileSystem {
     @Override
     public FSDataInputStream open(Path path, int bufferSize) throws IOException {
         LOG.debug("open: {}", path.toString());
-        return hdfs.open(path, bufferSize);
+        return new FSDataInputStream(new DelegateInputStream(hdfs.open(path, bufferSize), getConf()));
     }
 
     @Override

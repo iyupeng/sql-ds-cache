@@ -33,6 +33,7 @@ import com.intel.oap.fs.hadoop.cachedfs.cacheutil.SimpleFiberCache;
 import com.intel.oap.fs.hadoop.cachedfs.redis.RedisGlobalPMemCacheStatisticsStore;
 import com.intel.oap.fs.hadoop.cachedfs.redis.RedisPMemBlockLocationStore;
 
+import com.intel.oap.fs.hadoop.cachedfs.redis.RedisUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSInputStream;
@@ -40,6 +41,8 @@ import org.apache.hadoop.fs.Path;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class CachedInputStream extends FSInputStream {
   private static final Logger LOG = LoggerFactory.getLogger(CachedInputStream.class);
@@ -73,6 +76,18 @@ public class CachedInputStream extends FSInputStream {
   private String cacheBlackListRegexp;
   private boolean fileShouldBeCached;
 
+  private boolean enableReadMetrics = true;
+  private long readCount = 0;
+  private long loadBlockCount = 0;
+  private long loadLength = 0;
+  private long readLength = 0;
+  private long readTime = 0;
+  private long computeWaitTime = 0;
+  private long lastReadTime = 0;
+  private long streamCount = 0;
+  private long streamOpenTime = 0;
+  private long streamLifeTime = 0;
+
   public CachedInputStream(FSDataInputStream hdfsInputStream, Configuration conf,
                            Path path, int bufferSize, long contentLength) {
     this.hdfsInputStream = hdfsInputStream;
@@ -102,6 +117,22 @@ public class CachedInputStream extends FSInputStream {
     fileShouldBeCached = checkFileShouldBeCached();
 
     LOG.info("Opening file: {} for reading. fileShouldBeCached: {}", path, fileShouldBeCached);
+
+    streamCount += 1;
+    streamOpenTime = System.nanoTime();
+    if (enableReadMetrics) {
+      Jedis jedis = null;
+      try {
+        jedis = RedisUtils.getRedisClient(conf).getJedis();
+        jedis.hsetnx("rm_set", "rm_streamStart", String.valueOf(streamOpenTime));
+      } catch (Exception e) {
+        throw new JedisException(e.getMessage(), e);
+      } finally {
+        if (jedis != null) {
+          jedis.close();
+        }
+      }
+    }
   }
 
   private boolean checkFileShouldBeCached() {
@@ -256,12 +287,18 @@ public class CachedInputStream extends FSInputStream {
     }
 
     currentBlock.setData(cachedByteBuffer);
+
+    loadLength += bytesToRead;
+    loadBlockCount += 1;
+
     return true;
   }
 
   @Override
   public synchronized int read(byte[] buf, int off, int len) throws IOException {
     checkNotClosed();
+
+    long startTime = System.nanoTime();
 
     int totalBytesRead = 0;
     while (len > 0 && pos < contentLength) {
@@ -285,6 +322,15 @@ public class CachedInputStream extends FSInputStream {
       return -1;
     }
 
+    long endTime = System.nanoTime();
+    readCount += 1;
+    readLength += totalBytesRead;
+    readTime += (endTime - startTime);
+    if (lastReadTime != 0) {
+      computeWaitTime += (startTime - lastReadTime);
+    }
+    lastReadTime = endTime;
+
     return totalBytesRead;
   }
 
@@ -298,6 +344,33 @@ public class CachedInputStream extends FSInputStream {
 
   @Override
   public synchronized void close() throws IOException {
+    long streamEnd = System.nanoTime();
+    streamLifeTime = streamEnd - streamOpenTime;
+
+    if (enableReadMetrics) {
+      Jedis jedis = null;
+      try {
+        jedis = RedisUtils.getRedisClient(conf).getJedis();
+        jedis.hincrBy("rm_set", "rm_readCount", readCount);
+        jedis.hincrBy("rm_set", "rm_readLength", readLength);
+        jedis.hincrBy("rm_set", "rm_loadLength", loadLength);
+        jedis.hincrBy("rm_set", "rm_loadBlockCount", loadBlockCount);
+        jedis.hincrBy("rm_set", "rm_readTime", readTime);
+        jedis.hincrBy("rm_set", "rm_computeWaitTime", computeWaitTime);
+        jedis.hincrBy("rm_set", "rm_streamLifeTime", streamLifeTime);
+        jedis.hincrBy("rm_set", "rm_streamCount", streamCount);
+        jedis.hset("rm_set", "rm_streamEnd", String.valueOf(streamEnd));
+
+        LOG.info("reading metrics saved to redis");
+      } catch (Exception e) {
+        throw new JedisException(e.getMessage(), e);
+      } finally {
+        if (jedis != null) {
+          jedis.close();
+        }
+      }
+    }
+
     if (!closed) {
       super.close();
       hdfsInputStream.close();
