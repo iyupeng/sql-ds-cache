@@ -169,8 +169,7 @@ std::shared_ptr<Buffer> PlasmaCacheManager::getColumnChunk(::arrow::io::ReadRang
 
   std::vector<plasma::ObjectBuffer> obufs(1);
 
-arrow:
-  Status status = client_->Get(oids.data(), 1, -1, obufs.data());
+  arrow::Status status = client_->Get(oids.data(), 1, -1, obufs.data());
   if (!status.ok()) {
     ARROW_LOG(WARNING) << "plasma, Get failed: " << status.message();
     cache_miss_count_ += 1;
@@ -211,17 +210,20 @@ bool PlasmaCacheManager::cacheColumnChunk(::arrow::io::ReadRange range,
     return false;
   }
 
-  // save object id for future release()
-  object_ids.push_back(oid);
-
   // copy data
   memcpy(saved_data->mutable_data(), data->data(), data->size());
 
   // seal object
   status = client_->Seal(oid);
-
   if (!status.ok()) {
     ARROW_LOG(WARNING) << "plasma, Seal failed: " << status.message();
+    return false;
+  }
+
+  // release object
+  status = client_->Release(oid);
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Release failed: " << status.message();
     return false;
   }
 
