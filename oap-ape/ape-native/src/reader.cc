@@ -359,8 +359,8 @@ bool Reader::skipNextRowGroup() {
 void Reader::close() {
   ARROW_LOG(INFO) << "Filter takes " << time.count() * 1000 << " ms.";
 
-  ARROW_LOG(INFO) << "close reader.";
-  parquetReader->Close();
+  // No need to call parquetReader->Close(). It will be done in destructor.
+
   file->Close();
   for (auto ptr : extraByteArrayBuffers) {
     delete[] ptr;
