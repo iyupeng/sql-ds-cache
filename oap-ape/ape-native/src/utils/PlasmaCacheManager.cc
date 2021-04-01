@@ -299,6 +299,12 @@ std::shared_ptr<Buffer> PlasmaCacheManager::getFileRange(::arrow::io::ReadRange 
   ARROW_LOG(DEBUG) << "plasma, get object from cache: " << file_path_ << ", "
                    << range.offset << ", " << range.length;
 
+  // copy from plasma storage to system memory
+  auto copy_result = obufs[0].data->CopySlice(0, range.length);
+  if (copy_result.ok()) {
+    return copy_result.ValueOrDie();
+  }
+
   return obufs[0].data;
 }
 
