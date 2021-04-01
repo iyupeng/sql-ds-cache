@@ -350,6 +350,10 @@ bool PlasmaCacheManager::deleteFileRange(::arrow::io::ReadRange range) {
 
 std::shared_ptr<Buffer> PlasmaCacheManager::allocateFileRange(
     ::arrow::io::ReadRange range) {
+  if (cache_writer_ != nullptr) {
+    return cache_writer_->allocateFileRange(range);
+  }
+
   std::vector<plasma::ObjectID> oids;
   plasma::ObjectID oid = objectIdOfFileRange(range);
 
