@@ -393,8 +393,8 @@ bool PlasmaCacheManager::writeCacheObject(::arrow::io::ReadRange range,
 PlasmaCacheManagerProvider::PlasmaCacheManagerProvider(std::string file_path)
     : file_path_(file_path) {
   auto default_manager = std::make_shared<PlasmaCacheManager>(file_path);
-  auto cache_writer = std::make_shared<PlasmaCacheManager>(file_path);
-  default_manager->setCacheWriter(cache_writer);
+  // auto cache_writer = std::make_shared<PlasmaCacheManager>(file_path);
+  // default_manager->setCacheWriter(cache_writer);
   managers_.push_back(default_manager);
 }
 
@@ -423,8 +423,8 @@ std::shared_ptr<parquet::CacheManager> PlasmaCacheManagerProvider::defaultCacheM
 
 std::shared_ptr<parquet::CacheManager> PlasmaCacheManagerProvider::newCacheManager() {
   auto new_manager = std::make_shared<PlasmaCacheManager>(file_path_);
-  auto cache_writer = std::make_shared<PlasmaCacheManager>(file_path_);
-  new_manager->setCacheWriter(cache_writer);
+  // auto cache_writer = std::make_shared<PlasmaCacheManager>(file_path_);
+  // new_manager->setCacheWriter(cache_writer);
   managers_.push_back(new_manager);
 
   if (redis_options_) {
