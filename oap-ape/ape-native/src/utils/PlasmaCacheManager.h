@@ -92,6 +92,8 @@ class PlasmaCacheManager : public parquet::CacheManager, public AsyncCacheWriter
   bool cacheFileRange(::arrow::io::ReadRange range,
                       std::shared_ptr<Buffer> data) override;
   bool deleteFileRange(::arrow::io::ReadRange range) override;
+  std::shared_ptr<Buffer> allocateFileRange(::arrow::io::ReadRange range) override;
+  bool finishFileRange(::arrow::io::ReadRange range) override;
 
   bool writeCacheObject(::arrow::io::ReadRange range,
                         std::shared_ptr<Buffer> data) override;
@@ -99,6 +101,7 @@ class PlasmaCacheManager : public parquet::CacheManager, public AsyncCacheWriter
  protected:
   bool cacheFileRangeInternal(::arrow::io::ReadRange range, std::shared_ptr<Buffer> data);
   std::string cacheKeyofFileRange(::arrow::io::ReadRange range);
+  bool finishFileRangeInternal(::arrow::io::ReadRange range);
   void setCacheInfoToRedis();
 
  private:

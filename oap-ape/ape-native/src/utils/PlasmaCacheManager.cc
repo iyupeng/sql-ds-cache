@@ -324,19 +324,8 @@ bool PlasmaCacheManager::cacheFileRangeInternal(::arrow::io::ReadRange range,
   plasma::ObjectID oid = objectIdOfFileRange(range);
 
   // create new object
-  std::shared_ptr<Buffer> saved_data;
-  Status status = client_->Create(oid, data->size(), nullptr, 0, &saved_data);
-  if (plasma::IsPlasmaObjectExists(status)) {
-    ARROW_LOG(WARNING) << "plasma, Create failed, PlasmaObjectExists: "
-                       << status.message();
-    return false;
-  }
-  if (plasma::IsPlasmaStoreFull(status)) {
-    ARROW_LOG(WARNING) << "plasma, Create failed, PlasmaStoreFull: " << status.message();
-    return false;
-  }
-  if (!status.ok()) {
-    ARROW_LOG(WARNING) << "plasma, Create failed: " << status.message();
+  std::shared_ptr<Buffer> saved_data = allocateFileRange(range);
+  if (saved_data == nullptr) {
     return false;
   }
 
@@ -344,7 +333,50 @@ bool PlasmaCacheManager::cacheFileRangeInternal(::arrow::io::ReadRange range,
   memcpy(saved_data->mutable_data(), data->data(), data->size());
 
   // seal object
-  status = client_->Seal(oid);
+  return finishFileRangeInternal(range);
+}
+
+bool PlasmaCacheManager::deleteFileRange(::arrow::io::ReadRange range) {
+  arrow::Status status = client_->Delete(objectIdOfFileRange(range));
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Delete failed: " << status.message();
+    return false;
+  }
+
+  ARROW_LOG(INFO) << "plasma, delete object from cache: " << file_path_ << ", "
+                  << range.offset << ", " << range.length;
+  return true;
+}
+
+std::shared_ptr<Buffer> PlasmaCacheManager::allocateFileRange(
+    ::arrow::io::ReadRange range) {
+  std::vector<plasma::ObjectID> oids;
+  plasma::ObjectID oid = objectIdOfFileRange(range);
+
+  // create new object
+  std::shared_ptr<Buffer> buffer;
+  Status status = client_->Create(oid, range.length, nullptr, 0, &buffer);
+
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Create failed: " << status.message();
+    return nullptr;
+  }
+
+  return buffer;
+}
+
+bool PlasmaCacheManager::finishFileRange(::arrow::io::ReadRange range) {
+  if (cache_writer_ != nullptr) {
+    cache_writer_->insertCacheObject(range, nullptr);
+    return true;
+  } else {
+    return finishFileRangeInternal(range);
+  }
+}
+
+bool PlasmaCacheManager::finishFileRangeInternal(::arrow::io::ReadRange range) {
+  plasma::ObjectID oid = objectIdOfFileRange(range);
+  Status status = client_->Seal(oid);
   if (!status.ok()) {
     ARROW_LOG(WARNING) << "plasma, Seal failed: " << status.message();
 
@@ -379,21 +411,13 @@ bool PlasmaCacheManager::cacheFileRangeInternal(::arrow::io::ReadRange range,
   return true;
 }
 
-bool PlasmaCacheManager::deleteFileRange(::arrow::io::ReadRange range) {
-  arrow::Status status = client_->Delete(objectIdOfFileRange(range));
-  if (!status.ok()) {
-    ARROW_LOG(WARNING) << "plasma, Delete failed: " << status.message();
-    return false;
-  }
-
-  ARROW_LOG(INFO) << "plasma, delete object from cache: " << file_path_ << ", "
-                  << range.offset << ", " << range.length;
-  return true;
-}
-
 bool PlasmaCacheManager::writeCacheObject(::arrow::io::ReadRange range,
                                           std::shared_ptr<Buffer> data) {
-  return cacheFileRangeInternal(range, data);
+  if (data == nullptr) {
+    return finishFileRangeInternal(range);
+  } else {
+    return cacheFileRangeInternal(range, data);
+  }
 }
 
 PlasmaCacheManagerProvider::PlasmaCacheManagerProvider(std::string file_path)
