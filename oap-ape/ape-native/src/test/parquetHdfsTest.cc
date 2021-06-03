@@ -28,8 +28,8 @@
 TEST(ParquetHdfsTest, ReadTest) {
   arrow::fs::HdfsOptions options_;
 
-  std::string hdfs_host = "sr585";
-  int hdfs_port = 9000;
+  std::string hdfs_host = "cce-sw01.sh.intel.com";
+  int hdfs_port = 9001;
   // std::string hdfs_user = "kunshang";
 
   options_.ConfigureEndPoint(hdfs_host, hdfs_port);
@@ -42,8 +42,8 @@ TEST(ParquetHdfsTest, ReadTest) {
       std::make_shared<arrow::fs::SubTreeFileSystem>("", *result);
 
   std::string file_name =
-      "/tpcds_10g/store_sales/"
-      "part-00000-74feb3b4-1954-4be7-802d-a50912793bea-c000.snappy.parquet";
+      "/user/hive/warehouse/tpcds_1g_snappy/store_sales/"
+      "part-00000-ad0f638e-ca30-42ee-a337-d945131e4653-c000.snappy.parquet";
 
   auto file_result = fs_->OpenInputFile(file_name);
   EXPECT_TRUE(file_result.ok()) << "Open hdfs file failed";

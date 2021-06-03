@@ -22,6 +22,7 @@ package com.intel.oap.ape.service.netty.server;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 
+import com.intel.ape.ParquetReaderJNI;
 import com.intel.ape.service.netty.NettyMessage;
 
 import io.netty.bootstrap.ServerBootstrap;
@@ -47,6 +48,7 @@ import org.slf4j.LoggerFactory;
  */
 public class NettyServer {
     private static final Logger LOG = LoggerFactory.getLogger(NettyServer.class);
+    public static final int DEFAULT_PLASMA_CLIENT_POOL_CAPACITY = 10;
 
     private int port;
     private final String address;
@@ -81,6 +83,11 @@ public class NettyServer {
         EventLoopGroup workerGroup = new NioEventLoopGroup(availableProcessors);
         ChannelHandler encoder = new NettyMessage.NettyMessageEncoder();
 
+        // native pointer of the pool for plasma clients.
+        // this can save virtual memory consumption of server processes.
+        long plasmaClientPoolPtr =
+                ParquetReaderJNI.createPlasmaClientPool(DEFAULT_PLASMA_CLIENT_POOL_CAPACITY);
+
         bootstrap = new ServerBootstrap();
         bootstrap.group(bossGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
@@ -90,7 +97,7 @@ public class NettyServer {
                         ch.pipeline().addLast(
                                 encoder,
                                 new NettyMessage.NettyMessageDecoder(),
-                                new RequestHandler());
+                                new RequestHandler(plasmaClientPoolPtr));
                     }
                 })
                 .option(ChannelOption.SO_BACKLOG, 128)

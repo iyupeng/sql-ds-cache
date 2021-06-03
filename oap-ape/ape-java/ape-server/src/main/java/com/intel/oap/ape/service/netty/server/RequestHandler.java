@@ -43,6 +43,9 @@ public class RequestHandler extends SimpleChannelInboundHandler<NettyMessage> {
 
     private static final Logger LOG = LoggerFactory.getLogger(RequestHandler.class);
 
+    // native pointer of the pool for plasma clients
+    private final long plasmaClientPoolPtr;
+
     private long reader = 0;
 
     private int sequenceId = 0;
@@ -58,6 +61,10 @@ public class RequestHandler extends SimpleChannelInboundHandler<NettyMessage> {
     private boolean waitingReceipt = false;
 
     private int rowGroupsToRead = 0;
+
+    public RequestHandler(long plasmaClientPoolPtr) {
+        this.plasmaClientPoolPtr = plasmaClientPoolPtr;
+    }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
@@ -150,7 +157,8 @@ public class RequestHandler extends SimpleChannelInboundHandler<NettyMessage> {
                     params.getTotalGroupsToRead(),
                     params.isPlasmaCacheEnabled(),
                     params.isPreBufferEnabled(),
-                    params.isPlasmaCacheAsync()
+                    params.isPlasmaCacheAsync(),
+                    plasmaClientPoolPtr
         );
 
         // set storage of cache locality
