@@ -85,10 +85,16 @@ public class NettyServer {
 
         // native pointer of the pool for plasma clients.
         // this can save virtual memory consumption of server processes.
-        long plasmaClientPoolPtr =
-                ParquetReaderJNI.createPlasmaClientPool(DEFAULT_PLASMA_CLIENT_POOL_CAPACITY);
+        long plasmaClientPoolPtr = 0L;
+        try {
+            plasmaClientPoolPtr =
+                    ParquetReaderJNI.createPlasmaClientPool(DEFAULT_PLASMA_CLIENT_POOL_CAPACITY);
+        } catch (Exception ex) {
+            LOG.warn("Exception when creating a pool for plasma clients: ", ex);
+        }
 
         bootstrap = new ServerBootstrap();
+        long finalPlasmaClientPoolPtr = plasmaClientPoolPtr;
         bootstrap.group(bossGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
                 .childHandler(new ChannelInitializer<SocketChannel>() {
@@ -97,7 +103,7 @@ public class NettyServer {
                         ch.pipeline().addLast(
                                 encoder,
                                 new NettyMessage.NettyMessageDecoder(),
-                                new RequestHandler(plasmaClientPoolPtr));
+                                new RequestHandler(finalPlasmaClientPoolPtr));
                     }
                 })
                 .option(ChannelOption.SO_BACKLOG, 128)
