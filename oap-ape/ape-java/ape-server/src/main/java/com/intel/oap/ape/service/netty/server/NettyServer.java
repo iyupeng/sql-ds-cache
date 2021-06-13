@@ -51,7 +51,7 @@ public class NettyServer {
 
     // TODO make these configurable
     public static final int DEFAULT_PLASMA_CLIENT_POOL_CAPACITY = 50;
-    public static final int DEFAULT_CHANNEL_TIMEOUT_SECONDS = 300;
+    public static final int DEFAULT_CHANNEL_TIMEOUT_SECONDS = 1800;
     public static final int DEFAULT_MAX_ALIVE_NATIVE_READERS = 1000;
 
     private int port;
