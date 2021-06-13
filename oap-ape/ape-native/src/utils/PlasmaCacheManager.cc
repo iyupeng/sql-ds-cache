@@ -797,33 +797,7 @@ std::shared_ptr<Buffer> ShareClientPlasmaCacheManager::getFileRange(
   ARROW_LOG(DEBUG) << "plasma, get object from cache: " << file_path_ << ", "
                    << range.offset << ", " << range.length;
 
-  // allocate new buffer in main memory
-  auto buffer_alloc_result = arrow::AllocateResizableBuffer(obufs[0].data->size());
-  if (!buffer_alloc_result.ok()) {
-    ARROW_LOG(WARNING) << "plasma, failed to allocate new buffer";
-    return obufs[0].data;
-  }
-
-  // copy data from cache media to main memory
-  auto new_buffer = std::move(buffer_alloc_result).ValueUnsafe();
-  const uint8_t* src = obufs[0].data->data();
-  uint8_t* dest = new_buffer->mutable_data();
-  int length = obufs[0].data->size();
-
-  // memcpy(dest, src, length);
-
-  const int BLOCK_SIZE = 128 * 1024;  // 128 KB
-  int src_offset = 0;
-  int dest_offset = 0;
-  while (length > 0L) {
-    int size = std::min(length, BLOCK_SIZE);
-    memcpy(dest + dest_offset, src + src_offset, size);
-    length -= size;
-    src_offset += size;
-    dest_offset += size;
-  }
-
-  return std::move(new_buffer);
+  return obufs[0].data;
 }
 
 bool ShareClientPlasmaCacheManager::cacheFileRange(::arrow::io::ReadRange range,
@@ -965,33 +939,7 @@ std::shared_ptr<Buffer> ShareClientPlasmaCacheManager::getColumnPage(int32_t col
   ARROW_LOG(DEBUG) << "plasma, get column page from cache: " << file_path_ << ", "
                    << column_index << ", " << page_index;
 
-  // allocate new buffer in main memory
-  auto buffer_alloc_result = arrow::AllocateResizableBuffer(obufs[0].data->size());
-  if (!buffer_alloc_result.ok()) {
-    ARROW_LOG(WARNING) << "plasma, failed to allocate new buffer";
-    return obufs[0].data;
-  }
-
-  // copy data from cache media to main memory
-  auto new_buffer = std::move(buffer_alloc_result).ValueUnsafe();
-  const uint8_t* src = obufs[0].data->data();
-  uint8_t* dest = new_buffer->mutable_data();
-  int length = obufs[0].data->size();
-
-  // memcpy(dest, src, length);
-
-  const int BLOCK_SIZE = 128 * 1024;  // 128 KB
-  int src_offset = 0;
-  int dest_offset = 0;
-  while (length > 0L) {
-    int size = std::min(length, BLOCK_SIZE);
-    memcpy(dest + dest_offset, src + src_offset, size);
-    length -= size;
-    src_offset += size;
-    dest_offset += size;
-  }
-
-  return std::move(new_buffer);
+  return obufs[0].data;
 }
 
 bool ShareClientPlasmaCacheManager::cacheColumnPage(int32_t column_index,
