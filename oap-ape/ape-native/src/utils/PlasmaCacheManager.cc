@@ -44,19 +44,22 @@ plasma::ObjectID CacheKeyGenerator::objectIdOfFileRange(std::string file_path,
 }
 
 std::string CacheKeyGenerator::cacheKeyofColumnPage(std::string file_path,
-                                                    int32_t column_index,
-                                                    int32_t page_index) {
+                                                    int32_t group_ordinal,
+                                                    int32_t column_ordinal,
+                                                    int32_t page_ordinal) {
   char buff[1024];
-  snprintf(buff, sizeof(buff), "plasma_cache:parquet_page:%s:%ld_%ld", file_path.c_str(),
-           column_index, page_index);
+  snprintf(buff, sizeof(buff), "plasma_cache:parquet_page:%s:%d_%d_%d", file_path.c_str(),
+           group_ordinal, column_ordinal, page_ordinal);
   std::string ret = buff;
   return ret;
 }
 
 plasma::ObjectID CacheKeyGenerator::objectIdOfColumnPage(std::string file_path,
-                                                         int32_t column_index,
-                                                         int32_t page_index) {
-  std::string cache_key = cacheKeyofColumnPage(file_path, column_index, page_index);
+                                                         int32_t group_ordinal,
+                                                         int32_t column_ordinal,
+                                                         int32_t page_ordinal) {
+  std::string cache_key =
+      cacheKeyofColumnPage(file_path, group_ordinal, column_ordinal, page_ordinal);
 
   unsigned char hash[SHA_DIGEST_LENGTH];
   SHA1((const unsigned char*)cache_key.c_str(), cache_key.length(), hash);
@@ -408,12 +411,14 @@ bool PlasmaCacheManager::deleteFileRange(::arrow::io::ReadRange range) {
   return true;
 }
 
-bool PlasmaCacheManager::containsColumnPage(int32_t column_index, int32_t page_index) {
+bool PlasmaCacheManager::containsColumnPage(int32_t group_ordinal, int32_t column_ordinal,
+                                            int32_t page_ordinal) {
   bool has_object;
 
-  arrow::Status status = client_->Contains(
-      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index),
-      &has_object);
+  arrow::Status status =
+      client_->Contains(CacheKeyGenerator::objectIdOfColumnPage(
+                            file_path_, group_ordinal, column_ordinal, page_ordinal),
+                        &has_object);
   if (!status.ok()) {
     ARROW_LOG(WARNING) << "plasma, Contains failed: " << status.message();
     return false;
@@ -428,11 +433,12 @@ bool PlasmaCacheManager::containsColumnPage(int32_t column_index, int32_t page_i
   return has_object;
 }
 
-std::shared_ptr<Buffer> PlasmaCacheManager::getColumnPage(int32_t column_index,
-                                                          int32_t page_index) {
+std::shared_ptr<Buffer> PlasmaCacheManager::getColumnPage(int32_t group_ordinal,
+                                                          int32_t column_ordinal,
+                                                          int32_t page_ordinal) {
   std::vector<plasma::ObjectID> oids;
-  plasma::ObjectID oid =
-      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index);
+  plasma::ObjectID oid = CacheKeyGenerator::objectIdOfColumnPage(
+      file_path_, group_ordinal, column_ordinal, page_ordinal);
   oids.push_back(oid);
 
   std::vector<plasma::ObjectBuffer> obufs(1);
@@ -450,21 +456,24 @@ std::shared_ptr<Buffer> PlasmaCacheManager::getColumnPage(int32_t column_index,
   cache_hit_count_ += 1;
 
   ARROW_LOG(DEBUG) << "plasma, get column page from cache: " << file_path_ << ", "
-                   << column_index << ", " << page_index;
+                   << group_ordinal << ", " << column_ordinal << ", " << page_ordinal;
 
   return obufs[0].data;
 }
 
-bool PlasmaCacheManager::cacheColumnPage(int32_t column_index, int32_t page_index,
+bool PlasmaCacheManager::cacheColumnPage(int32_t group_ordinal, int32_t column_ordinal,
+                                         int32_t page_ordinal,
                                          std::shared_ptr<Buffer> data) {
-  return cacheColumnPageInternal(column_index, page_index, data);
+  return cacheColumnPageInternal(group_ordinal, column_ordinal, page_ordinal, data);
 }
 
-bool PlasmaCacheManager::cacheColumnPageInternal(int32_t column_index, int32_t page_index,
+bool PlasmaCacheManager::cacheColumnPageInternal(int32_t group_ordinal,
+                                                 int32_t column_ordinal,
+                                                 int32_t page_ordinal,
                                                  std::shared_ptr<Buffer> data) {
   std::vector<plasma::ObjectID> oids;
-  plasma::ObjectID oid =
-      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index);
+  plasma::ObjectID oid = CacheKeyGenerator::objectIdOfColumnPage(
+      file_path_, group_ordinal, column_ordinal, page_ordinal);
 
   // create new object
   std::shared_ptr<Buffer> saved_data;
@@ -514,22 +523,23 @@ bool PlasmaCacheManager::cacheColumnPageInternal(int32_t column_index, int32_t p
     return false;
   }
 
-  ARROW_LOG(DEBUG) << "plasma, column page cached: " << file_path_ << ", " << column_index
-                   << ", " << page_index;
+  ARROW_LOG(DEBUG) << "plasma, column page cached: " << file_path_ << ", "
+                   << group_ordinal << ", " << column_ordinal << ", " << page_ordinal;
 
   return true;
 }
 
-bool PlasmaCacheManager::deleteColumnPage(int32_t column_index, int32_t page_index) {
-  arrow::Status status = client_->Delete(
-      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index));
+bool PlasmaCacheManager::deleteColumnPage(int32_t group_ordinal, int32_t column_ordinal,
+                                          int32_t page_ordinal) {
+  arrow::Status status = client_->Delete(CacheKeyGenerator::objectIdOfColumnPage(
+      file_path_, group_ordinal, column_ordinal, page_ordinal));
   if (!status.ok()) {
     ARROW_LOG(WARNING) << "plasma, Delete failed: " << status.message();
     return false;
   }
 
   ARROW_LOG(INFO) << "plasma, delete column page from cache: " << file_path_ << ", "
-                  << column_index << ", " << page_index;
+                  << group_ordinal << ", " << column_ordinal << ", " << page_ordinal;
   return true;
 }
 
@@ -886,14 +896,16 @@ bool ShareClientPlasmaCacheManager::deleteFileRange(::arrow::io::ReadRange range
   return true;
 }
 
-bool ShareClientPlasmaCacheManager::containsColumnPage(int32_t column_index,
-                                                       int32_t page_index) {
+bool ShareClientPlasmaCacheManager::containsColumnPage(int32_t group_ordinal,
+                                                       int32_t column_ordinal,
+                                                       int32_t page_ordinal) {
   bool has_object;
 
   auto client = client_pool_->take();
-  arrow::Status status = client->Contains(
-      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index),
-      &has_object);
+  arrow::Status status =
+      client->Contains(CacheKeyGenerator::objectIdOfColumnPage(
+                           file_path_, group_ordinal, column_ordinal, page_ordinal),
+                       &has_object);
   client_pool_->put(client);
   if (!status.ok()) {
     ARROW_LOG(WARNING) << "plasma, Contains failed: " << status.message();
@@ -909,11 +921,11 @@ bool ShareClientPlasmaCacheManager::containsColumnPage(int32_t column_index,
   return has_object;
 }
 
-std::shared_ptr<Buffer> ShareClientPlasmaCacheManager::getColumnPage(int32_t column_index,
-                                                                     int32_t page_index) {
+std::shared_ptr<Buffer> ShareClientPlasmaCacheManager::getColumnPage(
+    int32_t group_ordinal, int32_t column_ordinal, int32_t page_ordinal) {
   std::vector<plasma::ObjectID> oids;
-  plasma::ObjectID oid =
-      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index);
+  plasma::ObjectID oid = CacheKeyGenerator::objectIdOfColumnPage(
+      file_path_, group_ordinal, column_ordinal, page_ordinal);
   oids.push_back(oid);
 
   std::vector<plasma::ObjectBuffer> obufs(1);
@@ -937,27 +949,29 @@ std::shared_ptr<Buffer> ShareClientPlasmaCacheManager::getColumnPage(int32_t col
   cache_hit_count_ += 1;
 
   ARROW_LOG(DEBUG) << "plasma, get column page from cache: " << file_path_ << ", "
-                   << column_index << ", " << page_index;
+                   << group_ordinal << ", " << column_ordinal << ", " << page_ordinal;
 
   return obufs[0].data;
 }
 
-bool ShareClientPlasmaCacheManager::cacheColumnPage(int32_t column_index,
-                                                    int32_t page_index,
+bool ShareClientPlasmaCacheManager::cacheColumnPage(int32_t group_ordinal,
+                                                    int32_t column_ordinal,
+                                                    int32_t page_ordinal,
                                                     std::shared_ptr<Buffer> data) {
   auto client = client_pool_->take();
-  bool ret = cacheColumnPageInternal(column_index, page_index, data, client);
+  bool ret =
+      cacheColumnPageInternal(group_ordinal, column_ordinal, page_ordinal, data, client);
   client_pool_->put(client);
 
   return ret;
 }
 
 bool ShareClientPlasmaCacheManager::cacheColumnPageInternal(
-    int32_t column_index, int32_t page_index, std::shared_ptr<Buffer> data,
-    std::shared_ptr<plasma::PlasmaClient> client) {
+    int32_t group_ordinal, int32_t column_ordinal, int32_t page_ordinal,
+    std::shared_ptr<Buffer> data, std::shared_ptr<plasma::PlasmaClient> client) {
   std::vector<plasma::ObjectID> oids;
-  plasma::ObjectID oid =
-      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index);
+  plasma::ObjectID oid = CacheKeyGenerator::objectIdOfColumnPage(
+      file_path_, group_ordinal, column_ordinal, page_ordinal);
 
   // create new object
   std::shared_ptr<Buffer> saved_data;
@@ -1007,17 +1021,18 @@ bool ShareClientPlasmaCacheManager::cacheColumnPageInternal(
     return false;
   }
 
-  ARROW_LOG(DEBUG) << "plasma, column page cached: " << file_path_ << ", " << column_index
-                   << ", " << page_index;
+  ARROW_LOG(DEBUG) << "plasma, column page cached: " << file_path_ << ", "
+                   << group_ordinal << ", " << column_ordinal << ", " << page_ordinal;
 
   return true;
 }
 
-bool ShareClientPlasmaCacheManager::deleteColumnPage(int32_t column_index,
-                                                     int32_t page_index) {
+bool ShareClientPlasmaCacheManager::deleteColumnPage(int32_t group_ordinal,
+                                                     int32_t column_ordinal,
+                                                     int32_t page_ordinal) {
   auto client = client_pool_->take();
-  arrow::Status status = client->Delete(
-      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index));
+  arrow::Status status = client->Delete(CacheKeyGenerator::objectIdOfColumnPage(
+      file_path_, group_ordinal, column_ordinal, page_ordinal));
   client_pool_->put(client);
   if (!status.ok()) {
     ARROW_LOG(WARNING) << "plasma, Delete failed: " << status.message();
@@ -1025,7 +1040,7 @@ bool ShareClientPlasmaCacheManager::deleteColumnPage(int32_t column_index,
   }
 
   ARROW_LOG(INFO) << "plasma, delete column page from cache: " << file_path_ << ", "
-                  << column_index << ", " << page_index;
+                  << group_ordinal << ", " << column_ordinal << ", " << page_ordinal;
   return true;
 }
 
