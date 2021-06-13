@@ -43,6 +43,27 @@ plasma::ObjectID CacheKeyGenerator::objectIdOfFileRange(std::string file_path,
   return plasma::ObjectID::from_binary(std::string(hash, hash + sizeof(hash)));
 }
 
+std::string CacheKeyGenerator::cacheKeyofColumnPage(std::string file_path,
+                                                    int32_t column_index,
+                                                    int32_t page_index) {
+  char buff[1024];
+  snprintf(buff, sizeof(buff), "plasma_cache:parquet_page:%s:%ld_%ld", file_path.c_str(),
+           column_index, page_index);
+  std::string ret = buff;
+  return ret;
+}
+
+plasma::ObjectID CacheKeyGenerator::objectIdOfColumnPage(std::string file_path,
+                                                         int32_t column_index,
+                                                         int32_t page_index) {
+  std::string cache_key = cacheKeyofColumnPage(file_path, column_index, page_index);
+
+  unsigned char hash[SHA_DIGEST_LENGTH];
+  SHA1((const unsigned char*)cache_key.c_str(), cache_key.length(), hash);
+
+  return plasma::ObjectID::from_binary(std::string(hash, hash + sizeof(hash)));
+}
+
 void AsyncCacheWriter::startCacheWriting() {
   // start a new thread
   ARROW_LOG(DEBUG) << "cache writer, starting loop thread";
@@ -207,7 +228,7 @@ void PlasmaCacheManager::setCacheInfoToRedis() {
       std::unordered_map<std::string, double> scores;
       char buff[1024];
       for (auto range : cached_ranges_) {
-        snprintf(buff, sizeof(buff), "%d_%d_%s", range.offset, range.length,
+        snprintf(buff, sizeof(buff), "%ld_%ld_%s", range.offset, range.length,
                  hostname.c_str());
         std::string member = buff;
         scores.insert({member, range.offset});
@@ -387,6 +408,131 @@ bool PlasmaCacheManager::deleteFileRange(::arrow::io::ReadRange range) {
   return true;
 }
 
+bool PlasmaCacheManager::containsColumnPage(int32_t column_index, int32_t page_index) {
+  bool has_object;
+
+  arrow::Status status = client_->Contains(
+      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index),
+      &has_object);
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Contains failed: " << status.message();
+    return false;
+  }
+
+  // we don't increase cache_hit_count_ here when has_object == true.
+  // cache_hit_count_ will be updated in `get()`.
+  if (!has_object) {
+    cache_miss_count_ += 1;
+  }
+
+  return has_object;
+}
+
+std::shared_ptr<Buffer> PlasmaCacheManager::getColumnPage(int32_t column_index,
+                                                          int32_t page_index) {
+  std::vector<plasma::ObjectID> oids;
+  plasma::ObjectID oid =
+      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index);
+  oids.push_back(oid);
+
+  std::vector<plasma::ObjectBuffer> obufs(1);
+
+  arrow::Status status = client_->Get(oids.data(), 1, 1000, obufs.data());
+  if (!status.ok() || obufs[0].data == nullptr) {
+    ARROW_LOG(WARNING) << "plasma, Get failed: " << status.message();
+    cache_miss_count_ += 1;
+    return nullptr;
+  }
+
+  // save object id for future release()
+  object_ids.push_back(oid);
+
+  cache_hit_count_ += 1;
+
+  ARROW_LOG(DEBUG) << "plasma, get column page from cache: " << file_path_ << ", "
+                   << column_index << ", " << page_index;
+
+  return obufs[0].data;
+}
+
+bool PlasmaCacheManager::cacheColumnPage(int32_t column_index, int32_t page_index,
+                                         std::shared_ptr<Buffer> data) {
+  return cacheColumnPageInternal(column_index, page_index, data);
+}
+
+bool PlasmaCacheManager::cacheColumnPageInternal(int32_t column_index, int32_t page_index,
+                                                 std::shared_ptr<Buffer> data) {
+  std::vector<plasma::ObjectID> oids;
+  plasma::ObjectID oid =
+      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index);
+
+  // create new object
+  std::shared_ptr<Buffer> saved_data;
+  Status status = client_->Create(oid, data->size(), nullptr, 0, &saved_data);
+  if (plasma::IsPlasmaObjectExists(status)) {
+    ARROW_LOG(WARNING) << "plasma, Create failed, PlasmaObjectExists: "
+                       << status.message();
+    return false;
+  }
+  if (plasma::IsPlasmaStoreFull(status)) {
+    ARROW_LOG(WARNING) << "plasma, Create failed, PlasmaStoreFull: " << status.message();
+    return false;
+  }
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Create failed: " << status.message();
+    return false;
+  }
+
+  // copy data
+  memcpy(saved_data->mutable_data(), data->data(), data->size());
+
+  // seal object
+  status = client_->Seal(oid);
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Seal failed: " << status.message();
+
+    // abort object
+    status = client_->Abort(oid);
+    if (!status.ok()) {
+      ARROW_LOG(WARNING) << "plasma, Abort failed: " << status.message();
+    }
+
+    // release object
+    status = client_->Release(oid);
+    if (!status.ok()) {
+      ARROW_LOG(WARNING) << "plasma, Release failed: " << status.message();
+      return false;
+    }
+
+    return false;
+  }
+
+  // release object
+  status = client_->Release(oid);
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Release failed: " << status.message();
+    return false;
+  }
+
+  ARROW_LOG(DEBUG) << "plasma, column page cached: " << file_path_ << ", " << column_index
+                   << ", " << page_index;
+
+  return true;
+}
+
+bool PlasmaCacheManager::deleteColumnPage(int32_t column_index, int32_t page_index) {
+  arrow::Status status = client_->Delete(
+      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index));
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Delete failed: " << status.message();
+    return false;
+  }
+
+  ARROW_LOG(INFO) << "plasma, delete column page from cache: " << file_path_ << ", "
+                  << column_index << ", " << page_index;
+  return true;
+}
+
 bool PlasmaCacheManager::writeCacheObject(::arrow::io::ReadRange range,
                                           std::shared_ptr<Buffer> data) {
   return cacheFileRangeInternal(range, data);
@@ -563,7 +709,7 @@ void ShareClientPlasmaCacheManager::setCacheInfoToRedis() {
       std::unordered_map<std::string, double> scores;
       char buff[1024];
       for (auto range : cached_ranges_) {
-        snprintf(buff, sizeof(buff), "%d_%d_%s", range.offset, range.length,
+        snprintf(buff, sizeof(buff), "%ld_%ld_%s", range.offset, range.length,
                  hostname.c_str());
         std::string member = buff;
         scores.insert({member, range.offset});
@@ -763,6 +909,175 @@ bool ShareClientPlasmaCacheManager::deleteFileRange(::arrow::io::ReadRange range
 
   ARROW_LOG(INFO) << "plasma, delete object from cache: " << file_path_ << ", "
                   << range.offset << ", " << range.length;
+  return true;
+}
+
+bool ShareClientPlasmaCacheManager::containsColumnPage(int32_t column_index,
+                                                       int32_t page_index) {
+  bool has_object;
+
+  auto client = client_pool_->take();
+  arrow::Status status = client->Contains(
+      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index),
+      &has_object);
+  client_pool_->put(client);
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Contains failed: " << status.message();
+    return false;
+  }
+
+  // we don't increase cache_hit_count_ here when has_object == true.
+  // cache_hit_count_ will be updated in `get()`.
+  if (!has_object) {
+    cache_miss_count_ += 1;
+  }
+
+  return has_object;
+}
+
+std::shared_ptr<Buffer> ShareClientPlasmaCacheManager::getColumnPage(int32_t column_index,
+                                                                     int32_t page_index) {
+  std::vector<plasma::ObjectID> oids;
+  plasma::ObjectID oid =
+      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index);
+  oids.push_back(oid);
+
+  std::vector<plasma::ObjectBuffer> obufs(1);
+
+  if (preferred_client_ == nullptr) {
+    auto client = client_pool_->take();
+    client_pool_->put(client);
+    preferred_client_ = client;
+  }
+
+  arrow::Status status = preferred_client_->Get(oids.data(), 1, 1000, obufs.data());
+  if (!status.ok() || obufs[0].data == nullptr) {
+    ARROW_LOG(WARNING) << "plasma, Get failed: " << status.message();
+    cache_miss_count_ += 1;
+    return nullptr;
+  }
+
+  // save object id for future release()
+  object_ids.push_back(oid);
+
+  cache_hit_count_ += 1;
+
+  ARROW_LOG(DEBUG) << "plasma, get column page from cache: " << file_path_ << ", "
+                   << column_index << ", " << page_index;
+
+  // allocate new buffer in main memory
+  auto buffer_alloc_result = arrow::AllocateResizableBuffer(obufs[0].data->size());
+  if (!buffer_alloc_result.ok()) {
+    ARROW_LOG(WARNING) << "plasma, failed to allocate new buffer";
+    return obufs[0].data;
+  }
+
+  // copy data from cache media to main memory
+  auto new_buffer = std::move(buffer_alloc_result).ValueUnsafe();
+  const uint8_t* src = obufs[0].data->data();
+  uint8_t* dest = new_buffer->mutable_data();
+  int length = obufs[0].data->size();
+
+  // memcpy(dest, src, length);
+
+  const int BLOCK_SIZE = 128 * 1024;  // 128 KB
+  int src_offset = 0;
+  int dest_offset = 0;
+  while (length > 0L) {
+    int size = std::min(length, BLOCK_SIZE);
+    memcpy(dest + dest_offset, src + src_offset, size);
+    length -= size;
+    src_offset += size;
+    dest_offset += size;
+  }
+
+  return std::move(new_buffer);
+}
+
+bool ShareClientPlasmaCacheManager::cacheColumnPage(int32_t column_index,
+                                                    int32_t page_index,
+                                                    std::shared_ptr<Buffer> data) {
+  auto client = client_pool_->take();
+  bool ret = cacheColumnPageInternal(column_index, page_index, data, client);
+  client_pool_->put(client);
+
+  return ret;
+}
+
+bool ShareClientPlasmaCacheManager::cacheColumnPageInternal(
+    int32_t column_index, int32_t page_index, std::shared_ptr<Buffer> data,
+    std::shared_ptr<plasma::PlasmaClient> client) {
+  std::vector<plasma::ObjectID> oids;
+  plasma::ObjectID oid =
+      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index);
+
+  // create new object
+  std::shared_ptr<Buffer> saved_data;
+  Status status = client->Create(oid, data->size(), nullptr, 0, &saved_data);
+  if (plasma::IsPlasmaObjectExists(status)) {
+    ARROW_LOG(WARNING) << "plasma, Create failed, PlasmaObjectExists: "
+                       << status.message();
+    return false;
+  }
+  if (plasma::IsPlasmaStoreFull(status)) {
+    ARROW_LOG(WARNING) << "plasma, Create failed, PlasmaStoreFull: " << status.message();
+    return false;
+  }
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Create failed: " << status.message();
+    return false;
+  }
+
+  // copy data
+  memcpy(saved_data->mutable_data(), data->data(), data->size());
+
+  // seal object
+  status = client->Seal(oid);
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Seal failed: " << status.message();
+
+    // abort object
+    status = client->Abort(oid);
+    if (!status.ok()) {
+      ARROW_LOG(WARNING) << "plasma, Abort failed: " << status.message();
+    }
+
+    // release object
+    status = client->Release(oid);
+    if (!status.ok()) {
+      ARROW_LOG(WARNING) << "plasma, Release failed: " << status.message();
+      return false;
+    }
+
+    return false;
+  }
+
+  // release object
+  status = client->Release(oid);
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Release failed: " << status.message();
+    return false;
+  }
+
+  ARROW_LOG(DEBUG) << "plasma, column page cached: " << file_path_ << ", " << column_index
+                   << ", " << page_index;
+
+  return true;
+}
+
+bool ShareClientPlasmaCacheManager::deleteColumnPage(int32_t column_index,
+                                                     int32_t page_index) {
+  auto client = client_pool_->take();
+  arrow::Status status = client->Delete(
+      CacheKeyGenerator::objectIdOfColumnPage(file_path_, column_index, page_index));
+  client_pool_->put(client);
+  if (!status.ok()) {
+    ARROW_LOG(WARNING) << "plasma, Delete failed: " << status.message();
+    return false;
+  }
+
+  ARROW_LOG(INFO) << "plasma, delete column page from cache: " << file_path_ << ", "
+                  << column_index << ", " << page_index;
   return true;
 }
 

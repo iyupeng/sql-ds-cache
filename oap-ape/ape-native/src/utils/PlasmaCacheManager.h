@@ -81,6 +81,11 @@ struct CacheKeyGenerator {
                                          ::arrow::io::ReadRange range);
   static plasma::ObjectID objectIdOfFileRange(std::string file_path,
                                               ::arrow::io::ReadRange range);
+
+  static std::string cacheKeyofColumnPage(std::string file_path, int32_t column_index,
+                                          int32_t page_index);
+  static plasma::ObjectID objectIdOfColumnPage(std::string file_path,
+                                               int32_t column_index, int32_t page_index);
 };
 
 class PlasmaCacheManager : public parquet::CacheManager, public AsyncCacheWriter {
@@ -101,11 +106,20 @@ class PlasmaCacheManager : public parquet::CacheManager, public AsyncCacheWriter
                       std::shared_ptr<Buffer> data) override;
   bool deleteFileRange(::arrow::io::ReadRange range) override;
 
+  bool containsColumnPage(int32_t column_index, int32_t page_index) override;
+  std::shared_ptr<Buffer> getColumnPage(int32_t column_index,
+                                        int32_t page_index) override;
+  bool cacheColumnPage(int32_t column_index, int32_t page_index,
+                       std::shared_ptr<Buffer> data) override;
+  bool deleteColumnPage(int32_t column_index, int32_t page_index) override;
+
   bool writeCacheObject(::arrow::io::ReadRange range,
                         std::shared_ptr<Buffer> data) override;
 
  protected:
   bool cacheFileRangeInternal(::arrow::io::ReadRange range, std::shared_ptr<Buffer> data);
+  bool cacheColumnPageInternal(int32_t column_index, int32_t page_index,
+                               std::shared_ptr<Buffer> data);
   void setCacheInfoToRedis();
 
  private:
@@ -191,9 +205,19 @@ class ShareClientPlasmaCacheManager : public parquet::CacheManager {
                       std::shared_ptr<Buffer> data) override;
   bool deleteFileRange(::arrow::io::ReadRange range) override;
 
+  bool containsColumnPage(int32_t column_index, int32_t page_index) override;
+  std::shared_ptr<Buffer> getColumnPage(int32_t column_index,
+                                        int32_t page_index) override;
+  bool cacheColumnPage(int32_t column_index, int32_t page_index,
+                       std::shared_ptr<Buffer> data) override;
+  bool deleteColumnPage(int32_t column_index, int32_t page_index) override;
+
  protected:
   bool cacheFileRangeInternal(::arrow::io::ReadRange range, std::shared_ptr<Buffer> data,
                               std::shared_ptr<plasma::PlasmaClient> client);
+  bool cacheColumnPageInternal(int32_t column_index, int32_t page_index,
+                               std::shared_ptr<Buffer> data,
+                               std::shared_ptr<plasma::PlasmaClient> client);
   void setCacheInfoToRedis();
 
  private:
