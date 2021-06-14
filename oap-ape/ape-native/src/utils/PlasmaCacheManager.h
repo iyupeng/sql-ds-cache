@@ -168,7 +168,7 @@ class PlasmaClientPool {
  private:
   int capacity_;
   // current ordinal of client to be delivered
-  int current_;
+  int current_ = 0;
   std::vector<std::shared_ptr<plasma::PlasmaClient>> allocated_clients_;
   std::queue<std::shared_ptr<plasma::PlasmaClient>> free_clients_;
 };
