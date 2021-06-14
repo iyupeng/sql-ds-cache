@@ -461,7 +461,6 @@ PlasmaClientPool::PlasmaClientPool(int capacity) : capacity_(capacity) {
     arrow::Status status = client->Connect("/tmp/plasmaStore", "", 0);
 
     if (status.ok()) {
-      free_clients_.push(client);
       allocated_clients_.push_back(client);
     } else {
       ARROW_LOG(WARNING) << "plasma, Connect failed: " << status.message();
@@ -469,7 +468,7 @@ PlasmaClientPool::PlasmaClientPool(int capacity) : capacity_(capacity) {
   }
 
   ARROW_LOG(INFO) << "PlasmaClientPool, initialized plasma client pool, size: "
-                  << free_clients_.size();
+                  << allocated_clients_.size();
 }
 
 PlasmaClientPool::~PlasmaClientPool() { close(); }
@@ -495,39 +494,14 @@ void PlasmaClientPool::close() {
 int PlasmaClientPool::capacity() { return capacity_; }
 
 std::shared_ptr<plasma::PlasmaClient> PlasmaClientPool::take() {
-  while (true) {
-    std::unique_lock<std::mutex> lck(queue_mutex_);
-
-    if (!free_clients_.empty()) {
-      std::shared_ptr<plasma::PlasmaClient> client = free_clients_.front();
-      free_clients_.pop();
-
-      ARROW_LOG(DEBUG) << "PlasmaClientPool, take free client";
-
-      return client;
-    }
-
-    ARROW_LOG(DEBUG) << "PlasmaClientPool, wait for free client";
-
-    waiting_count_ += 1;
-    queue_cv_.wait(lck);
-    waiting_count_ -= 1;
-
-    ARROW_LOG(DEBUG) << "PlasmaClientPool, wake up";
-  }
+  int i = current_;
+  current_ = (current_ + 1) % allocated_clients_.size();
+  return allocated_clients_[i];
 }
 
 void PlasmaClientPool::put(std::shared_ptr<plasma::PlasmaClient> client) {
-  std::unique_lock<std::mutex> lck(queue_mutex_);
-
-  free_clients_.push(client);
-
-  lck.unlock();
-
-  if (waiting_count_ > 0) {
-    ARROW_LOG(DEBUG) << "PlasmaClientPool, notification of free client";
-    queue_cv_.notify_one();
-  }
+  // do nothing
+  return;
 }
 
 ShareClientPlasmaCacheManager::ShareClientPlasmaCacheManager(

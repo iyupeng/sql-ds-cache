@@ -50,8 +50,8 @@ public class NettyServer {
     private static final Logger LOG = LoggerFactory.getLogger(NettyServer.class);
 
     // TODO make these configurable
-    public static final int DEFAULT_PLASMA_CLIENT_POOL_CAPACITY = 10;
-    public static final int DEFAULT_CHANNEL_TIMEOUT_SECONDS = 300;
+    public static final int DEFAULT_PLASMA_CLIENT_POOL_CAPACITY = 30;
+    public static final int DEFAULT_CHANNEL_TIMEOUT_SECONDS = 1800;
 
     private int port;
     private final String address;

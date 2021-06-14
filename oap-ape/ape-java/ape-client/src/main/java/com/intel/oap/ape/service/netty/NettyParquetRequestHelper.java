@@ -209,7 +209,7 @@ public class NettyParquetRequestHelper {
 
     private void initializeNettyClient() {
         // get configurations
-        int timeoutSeconds = hadoopConfig.getInt(CONF_KEY_CLIENT_TIMEOUT, 120);
+        int timeoutSeconds = hadoopConfig.getInt(CONF_KEY_CLIENT_TIMEOUT, 1800);
         // in APE, a netty client is not shared across tasks. So it does not need a large
         // thread pool to handle server responses.
         int clientThreads = hadoopConfig.getInt(CONF_KEY_CLIENT_THREADS, 1);

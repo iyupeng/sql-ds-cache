@@ -167,15 +167,10 @@ class PlasmaClientPool {
 
  private:
   int capacity_;
+  // current ordinal of client to be delivered
+  int current_;
   std::vector<std::shared_ptr<plasma::PlasmaClient>> allocated_clients_;
   std::queue<std::shared_ptr<plasma::PlasmaClient>> free_clients_;
-
-  // a mutex to protect client queues
-  std::mutex queue_mutex_;
-  // condition variable for waiting threads
-  std::condition_variable queue_cv_;
-
-  int waiting_count_ = 0;
 };
 
 class ShareClientPlasmaCacheManager : public parquet::CacheManager {
